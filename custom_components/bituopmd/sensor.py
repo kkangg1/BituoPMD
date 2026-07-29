@@ -138,13 +138,14 @@ async def async_setup_entry(
         entry.entry_id
     ]["coordinator"]
     identity_host = entry.data.get(CONF_IDENTITY_HOST, entry.data[CONF_HOST_IP])
+    ota_versions = await hass.async_add_executor_job(_load_ota_versions)
 
     entities: list[SensorEntity] = [
         BituoSensor(coordinator, identity_host, field)
         for field in coordinator.data
         if field not in EXCLUDED_FIELDS
     ]
-    entities.append(BituoOTASensor(coordinator, identity_host))
+    entities.append(BituoOTASensor(coordinator, identity_host, ota_versions))
     async_add_entities(entities)
 
 
@@ -204,9 +205,11 @@ class BituoOTASensor(BituoEntity, SensorEntity):
         self,
         coordinator: BituoDataUpdateCoordinator,
         identity_host: str,
+        ota_versions: dict[str, str],
     ) -> None:
         """Initialize the OTA status sensor with the upstream unique ID."""
         super().__init__(coordinator, identity_host)
+        self._ota_versions = ota_versions
         self._attr_name = "OTA Status"
         self._attr_unique_id = f"{identity_host}_ota_status"
         self.entity_id = f"sensor.{identity_host.replace('.', '_')}_ota_status"
@@ -216,13 +219,12 @@ class BituoOTASensor(BituoEntity, SensorEntity):
         """Return the firmware comparison result without another HTTP poll."""
         info = self.coordinator.device_info_data
         current = info["fw_version"]
-        versions = _load_ota_versions()
         try:
             current_version = Version(current)
             if current_version.major >= 4:
-                latest = versions.get("common")
+                latest = self._ota_versions.get("common")
             else:
-                latest = versions.get(info["model"])
+                latest = self._ota_versions.get(info["model"])
             if not latest:
                 return "Unknown"
             return (
