@@ -1,5 +1,16 @@
 # Bituo Device for Home Assistant
 
+## Fork changes (v1.1.0)
+
+This fork builds on upstream V1.0.4 with stability and discovery fixes:
+
+- **Discovery**: match both `EnergySensor-*` and `BITUO TECHNIK-*` mDNS names, so newer-firmware devices are auto-discovered instead of manual-IP only.
+- **Timeouts**: every HTTP call to the device now has a 10s timeout; a hung device web server no longer stalls Home Assistant executor threads.
+- **No blocking I/O in the event loop**: `settings.json` / `ota_versions.json` reads and writes run in the executor (fixes HA's "Detected blocking call to open" warning).
+- **No phantom pollers**: the switch platform probes `/hadata` once and only starts its 2-second coordinator when the device actually has a relay. Meter-only models (SPM01/SPM02) no longer poll pointlessly.
+- **Clean statistics**: missing sensor values report `unavailable` instead of a bogus `0` (protects long-term energy statistics).
+- **Housekeeping**: config-entry unload cancels background tasks; `set_frequency` service now applies to the targeted device (or all devices) instead of only the last-loaded one; removed committed `__pycache__` files.
+
 ## Installation
 
 ### Install with HACS 

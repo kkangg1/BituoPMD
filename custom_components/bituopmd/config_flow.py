@@ -8,9 +8,20 @@ from homeassistant.components.zeroconf import async_get_instance
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 import voluptuous as vol
 from zeroconf import ServiceBrowser, ServiceStateChange
-from .const import DOMAIN, CONF_HOST_IP
+from .const import DOMAIN, CONF_HOST_IP, DEFAULT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_bituo_device(name: str) -> bool:
+    """Match Bituo devices advertised via mDNS.
+
+    Devices ship with either "EnergySensor-<model>-<sn>" or
+    "BITUO TECHNIK-<model>-<sn>" hostnames depending on firmware.
+    """
+    n = name.lower()
+    return "energysensor" in n or "bituo" in n
+
 
 class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -45,7 +56,7 @@ class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.host = discovery_info.host
         self.name = discovery_info.name.split(".")[0]
 
-        if "energysensor" not in self.name.lower():
+        if not _is_bituo_device(self.name):
             return self.async_abort(reason="not_bituotechnik_device")
         
         existing_entries = self._async_current_entries()
@@ -81,7 +92,7 @@ class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             )
             
             # 在设备配对成功后，移除已配对的设备
-            await self.hass.async_add_executor_job(self.async_remove_discovered_device, self.host)
+            await self.async_remove_discovered_device(self.host)
             
             return entry
 
@@ -171,7 +182,7 @@ class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ip_address = user_input.get(CONF_HOST_IP)
                 try:
                     response = await self.hass.async_add_executor_job(
-                        requests.get, f"http://{ip_address}/data"
+                        lambda: requests.get(f"http://{ip_address}/data", timeout=DEFAULT_TIMEOUT)
                     )
                     response.raise_for_status()
                     data = response.json()
@@ -234,7 +245,7 @@ class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             info = zeroconf.get_service_info(service_type, name)
             if info:
                 address = socket.inet_ntoa(info.addresses[0])
-                if "energysensor" in name.lower():  # Ensure the device name contains 'bituotechnik'
+                if _is_bituo_device(name):
                     # Check if the device is already in the list or already configured
                     existing_entries = self._async_current_entries()
                     

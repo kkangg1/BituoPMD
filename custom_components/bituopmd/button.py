@@ -10,7 +10,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from homeassistant.exceptions import ConfigEntryNotReady
-from .const import DOMAIN, CONF_HOST_IP
+from .const import DOMAIN, CONF_HOST_IP, DEFAULT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     host_ip = entry.data[CONF_HOST_IP]
     try:
         response = await hass.async_add_executor_job(
-            requests.get, f"http://{host_ip}/data"
+            lambda: requests.get(f"http://{host_ip}/data", timeout=DEFAULT_TIMEOUT)
         )
         data = response.json()
         device_info = {
@@ -78,7 +78,7 @@ class DeviceLocatingButton(ButtonEntity):
     async def async_press(self):
         """Handle the button press."""
         await self.hass.async_add_executor_job(
-            requests.get, f"http://{self._host_ip}/location"
+            lambda: requests.get(f"http://{self._host_ip}/location", timeout=DEFAULT_TIMEOUT)
         )
     
     @staticmethod

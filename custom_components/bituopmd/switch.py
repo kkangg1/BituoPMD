@@ -9,7 +9,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from homeassistant.exceptions import ConfigEntryNotReady
-from .const import DOMAIN, CONF_HOST_IP
+from .const import DOMAIN, CONF_HOST_IP, DEFAULT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +18,23 @@ SCAN_INTERVAL = timedelta(seconds=2)
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up switch platform."""
     host_ip = entry.data[CONF_HOST_IP]
+
+    # Probe once: only devices exposing a relay get a switch coordinator.
+    # This avoids a permanent 2-second poller on meter-only models (SPM01/SPM02).
+    try:
+        probe = await hass.async_add_executor_job(
+            lambda: requests.get(f"http://{host_ip}/hadata", timeout=DEFAULT_TIMEOUT).json()
+        )
+    except Exception as err:
+        _LOGGER.warning("Switch probe failed for %s: %s; skipping switch platform", host_ip, err)
+        async_add_entities([])
+        return
+
+    if not isinstance(probe, dict) or "switchstatus" not in probe:
+        _LOGGER.debug("No relay on %s, skipping switch platform", host_ip)
+        async_add_entities([])
+        return
+
     coordinator = BituoDataUpdateCoordinator(hass, host_ip)
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -51,14 +68,14 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             # Fetch data from /hadata
             response = await self.hass.async_add_executor_job(
-                requests.get, f"http://{self.host_ip}/hadata"
+                lambda: requests.get(f"http://{self.host_ip}/hadata", timeout=DEFAULT_TIMEOUT)
             )
             data = response.json()
 
             # Only fetch switch status if 'switchstatus' is in the data
             if "switchstatus" in data:
                 status_response = await self.hass.async_add_executor_job(
-                    requests.get, f"http://{self.host_ip}/status"
+                    lambda: requests.get(f"http://{self.host_ip}/status", timeout=DEFAULT_TIMEOUT)
                 )
                 status = status_response.text.strip().lower() == "true"
                 data["switchstatus"] = status
@@ -71,7 +88,7 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch device model and firmware version information."""
         try:
             response = await self.hass.async_add_executor_job(
-                requests.get, f"http://{self.host_ip}/data"
+                lambda: requests.get(f"http://{self.host_ip}/data", timeout=DEFAULT_TIMEOUT)
             )
             data = response.json()
             return {
@@ -128,14 +145,14 @@ class BituoSwitch(CoordinatorEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""
         await self.hass.async_add_executor_job(
-            requests.get, f"http://{self._host_ip}/switchon"
+            lambda: requests.get(f"http://{self._host_ip}/switchon", timeout=DEFAULT_TIMEOUT)
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
         await self.hass.async_add_executor_job(
-            requests.get, f"http://{self._host_ip}/switchoff"
+            lambda: requests.get(f"http://{self._host_ip}/switchoff", timeout=DEFAULT_TIMEOUT)
         )
         await self.coordinator.async_request_refresh()
 

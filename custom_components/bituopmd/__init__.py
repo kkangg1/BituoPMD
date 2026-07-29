@@ -4,7 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
 from homeassistant.exceptions import ConfigEntryNotReady
-from .const import DOMAIN, CONF_HOST_IP
+from .const import DOMAIN, CONF_HOST_IP, DEFAULT_TIMEOUT
 from .frontend import setup_frontend
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Fetch device data to get model id and verify connection
     try:
         response = await hass.async_add_executor_job(
-            requests.get, f"http://{host_ip}/data"
+            lambda: requests.get(f"http://{host_ip}/data", timeout=DEFAULT_TIMEOUT)
         )
         response.raise_for_status()  # Check for HTTP errors
         data = response.json()
@@ -59,6 +59,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         _LOGGER.info("Successfully unloaded BituoPMD integration for %s", entry.data[CONF_HOST_IP])
         if DOMAIN in hass.data:
+            entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+            coordinator = entry_data.get("sensor_coordinator") if isinstance(entry_data, dict) else None
+            if coordinator is not None and hasattr(coordinator, "async_dispose"):
+                await coordinator.async_dispose()
             hass.data[DOMAIN].pop(entry.entry_id, None)
 
     return unload_ok

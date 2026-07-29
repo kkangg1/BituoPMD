@@ -2,3 +2,4 @@
 DOMAIN = "bituopmd"
 CONF_HOST_IP = "host_ip"
 
+DEFAULT_TIMEOUT = 10

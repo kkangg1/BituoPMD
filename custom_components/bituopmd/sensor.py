@@ -27,7 +27,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from packaging import version
-from .const import DOMAIN, CONF_HOST_IP
+from .const import DOMAIN, CONF_HOST_IP, DEFAULT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,8 +64,6 @@ def load_ota_versions():
         return {}
 
 settings = load_settings()
-ota_versions = load_ota_versions()
-
 
 
 UNIT_MAPPING = {
@@ -96,7 +94,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     """Set up sensor platform."""
     host_ip = entry.data[CONF_HOST_IP]
     current_scan_interval = settings["devices"].get(host_ip, {}).get("scan_interval", 5)
-    coordinator = BituoDataUpdateCoordinator(hass, host_ip, current_scan_interval)
+    # Load OTA version info in the executor to avoid blocking the event loop
+    ota_versions = await hass.async_add_executor_job(load_ota_versions)
+    coordinator = BituoDataUpdateCoordinator(hass, host_ip, current_scan_interval, ota_versions)
     # Store the coordinator so it can be accessed by other platforms like button
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
@@ -128,34 +128,54 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async def handle_set_frequency(call):
         """Handle the service call to set the data fetch frequency."""
         frequency = call.data.get("frequency", 5)
-        device_id = call.data.get("device_id")  # 获取设备 ID
+        device_id = call.data.get("device_id")  # host IP; empty = all devices
 
-        # 更新特定设备的频率配置
-        settings["devices"].setdefault(device_id, {})["scan_interval"] = frequency
-        save_settings(settings)
-        
-        # 立即刷新设备数据
-        await coordinator.async_refresh()
+        # Apply to every configured device when no explicit target is given,
+        # otherwise only to the matching one.
+        targets = []
+        for entry_id, bucket in hass.data.get(DOMAIN, {}).items():
+            coord = bucket.get("sensor_coordinator") if isinstance(bucket, dict) else None
+            if coord is None:
+                continue
+            if device_id in (None, "", coord.host_ip):
+                targets.append(coord)
 
-        # 更新协调器的扫描间隔
-        coordinator.update_interval = timedelta(seconds=frequency)
+        for coord in targets:
+            settings["devices"].setdefault(coord.host_ip, {})["scan_interval"] = frequency
+            coord.update_interval = timedelta(seconds=frequency)
+
+        await hass.async_add_executor_job(save_settings, settings)
+
+        for coord in targets:
+            await coord.async_refresh()
 
     hass.services.async_register(DOMAIN, "set_frequency", handle_set_frequency)
 
 class BituoDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the device."""
 
-    def __init__(self, hass, host_ip, scan_interval):
+    def __init__(self, hass, host_ip, scan_interval, ota_versions=None):
         """Initialize."""
         self.host_ip = host_ip
-        self.ota_versions = load_ota_versions()
+        self.ota_versions = ota_versions if ota_versions is not None else {}
         self.ota_entity = None  # init ota_entity
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=scan_interval))
 
-        self.hass.loop.create_task(self._periodically_update_scan_interval())
+        self._tasks = [
+            self.hass.loop.create_task(self._periodically_update_scan_interval()),
+            # Schedule OTA update check every 30 minutes
+            self.hass.loop.create_task(self._schedule_ota_update_checks()),
+        ]
 
-         # Schedule OTA update check every 30 minutes
-        self._ota_update_task = hass.loop.create_task(self._schedule_ota_update_checks())
+    async def async_dispose(self):
+        """Cancel background tasks when the config entry is unloaded."""
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     def get_scan_interval(self):
         """Get the scan interval from settings."""
@@ -180,7 +200,7 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from the device."""
         try:
             response = await self.hass.async_add_executor_job(
-                requests.get, f"http://{self.host_ip}/data"
+                lambda: requests.get(f"http://{self.host_ip}/data", timeout=DEFAULT_TIMEOUT)
             )
             response.raise_for_status()
             data = response.json()
@@ -203,7 +223,7 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch device model and firmware version information."""
         try:
             response = await self.hass.async_add_executor_job(
-                requests.get, f"http://{self.host_ip}/data"
+                lambda: requests.get(f"http://{self.host_ip}/data", timeout=DEFAULT_TIMEOUT)
             )
             response.raise_for_status()
             data = response.json()
@@ -354,10 +374,9 @@ class BituoSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         """Return the native state of the sensor."""
-        value = self.coordinator.data.get(self._field)
-        if value is None:
-            return 0  # 或其它合适的默认值
-        return value
+        # None keeps the entity unavailable instead of injecting bogus 0
+        # readings into long-term statistics (critical for energy sensors).
+        return self.coordinator.data.get(self._field)
 
     @property
     def native_unit_of_measurement(self):

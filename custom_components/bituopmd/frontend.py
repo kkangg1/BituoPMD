@@ -45,7 +45,10 @@ class DeviceProxyView(HomeAssistantView):
         data = await request.json()
         if action == "set_frequency":
             # 调用处理频率更新的服务
-            await request.app["hass"].services.async_call(DOMAIN, "set_frequency", {"frequency": data["frequency"]})
+            await request.app["hass"].services.async_call(
+                DOMAIN, "set_frequency",
+                {"frequency": data["frequency"], "device_id": device_ip},
+            )
             return self.json({"status": "frequency updated"})
         url = f"http://{device_ip}/{action}"
         _LOGGER.debug(f"Proxying POST request to {url} with data {data}")
