@@ -205,7 +205,54 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator):
             response.raise_for_status()
             data = response.json()
             # _LOGGER.debug(f"{self.host_ip} - {data}")
-            
+
+            # Firmware >= 5.1.10 dropped the aggregate fields (totals and
+            # averages). Synthesize them from per-phase values so existing
+            # entities, dashboards and energy statistics keep working.
+            def _num(key):
+                try:
+                    return float(data[key])
+                except (KeyError, TypeError, ValueError):
+                    return None
+
+            phases = ("X", "Y", "Z")
+            aggregates = {
+                "TotalActivePower": "ActivePower",
+                "TotalReactivePower": "ReactivePower",
+                "TotalApparentPower": "ApparentPower",
+                "TotalCurrent": "Current",
+                "TotalForwardEnergy": "ForwardEnergy",
+                "TotalReverseEnergy": "ReverseEnergy",
+            }
+            for total_key, prefix in aggregates.items():
+                if total_key in data:
+                    continue
+                vals = [_num(f"{prefix}{p}") for p in phases]
+                if all(v is not None for v in vals):
+                    data[total_key] = round(sum(vals), 3)
+
+            for p in phases:
+                key = f"TotalEnergy{p}"
+                if key not in data:
+                    fwd, rev = _num(f"ForwardEnergy{p}"), _num(f"ReverseEnergy{p}")
+                    if fwd is not None and rev is not None:
+                        data[key] = round(fwd + rev, 3)
+
+            if "TotalEnergy" not in data:
+                fwd, rev = _num("TotalForwardEnergy"), _num("TotalReverseEnergy")
+                if fwd is not None and rev is not None:
+                    data["TotalEnergy"] = round(fwd + rev, 3)
+
+            if "AverageVoltageL_N" not in data:
+                vals = [_num(f"Voltage{p}") for p in phases]
+                if all(v is not None for v in vals):
+                    data["AverageVoltageL_N"] = round(sum(vals) / len(phases), 1)
+
+            if "AverageLineCurrent" not in data:
+                vals = [_num(f"Current{p}") for p in phases]
+                if all(v is not None for v in vals):
+                    data["AverageLineCurrent"] = round(sum(vals) / len(phases), 3)
+
             # Multiply power values by 1000
             for key in data:
                 if 'power' in key.lower() and 'factor' not in key.lower():
