@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import BituoApiClient, BituoApiError
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, FAILURE_THRESHOLD
 from .helpers import normalize_meter_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Initialize the coordinator."""
         self.client = client
         self.supports_switch = False
+        self._consecutive_failures = 0
         super().__init__(
             hass,
             _LOGGER,
@@ -83,8 +84,19 @@ class BituoDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = normalize_meter_data(await self.client.async_get_data())
             if self.supports_switch:
                 data["switchstatus"] = await self.client.async_get_switch_state()
-            return data
         except BituoApiError as err:
+            self._consecutive_failures += 1
+            if self.data is not None and self._consecutive_failures < FAILURE_THRESHOLD:
+                _LOGGER.debug(
+                    "Ignoring transient failure %s/%s for %s, keeping last data: %s",
+                    self._consecutive_failures,
+                    FAILURE_THRESHOLD,
+                    self.host,
+                    err,
+                )
+                return self.data
             raise UpdateFailed(
                 f"Error communicating with Bituo device {self.host}: {err}"
             ) from err
+        self._consecutive_failures = 0
+        return data
