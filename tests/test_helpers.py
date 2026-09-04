@@ -60,6 +60,25 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(data["AverageVoltageLN"], 230.0)
         self.assertEqual(data["TotalForwardEnergy"], 60.0)
         self.assertAlmostEqual(data["TotalReverseEnergy"], 0.6)
+        self.assertAlmostEqual(data["TotalEnergyX"], 10.1)
+        self.assertAlmostEqual(data["TotalEnergyY"], 20.2)
+        self.assertAlmostEqual(data["TotalEnergyZ"], 30.3)
+        self.assertAlmostEqual(data["TotalEnergy"], 60.6)
+
+    def test_total_energy_prefers_native_vendor_values(self) -> None:
+        """A firmware-provided TotalEnergy remains authoritative."""
+        data = helpers.normalize_meter_data(
+            {
+                "ForwardEnergyX": 10.0,
+                "ReverseEnergyX": 0.5,
+                "TotalEnergyX": 99.0,
+                "TotalForwardEnergy": 100.0,
+                "TotalReverseEnergy": 5.0,
+                "TotalEnergy": 95.0,
+            }
+        )
+        self.assertEqual(data["TotalEnergyX"], 99.0)
+        self.assertEqual(data["TotalEnergy"], 95.0)
 
     def test_existing_vendor_totals_are_not_overwritten(self) -> None:
         """A firmware-provided total remains authoritative."""

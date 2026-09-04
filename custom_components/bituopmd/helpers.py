@@ -67,6 +67,23 @@ def normalize_meter_data(payload: dict[str, Any]) -> dict[str, Any]:
         if value is not None and key not in data:
             data[key] = value
 
+    # Per-phase and overall total energy, from native or derived
+    # forward/reverse figures. Firmware-provided values always win.
+    for phase in PHASES:
+        key = f"TotalEnergy{phase}"
+        if key in data:
+            continue
+        forward = number(data.get(f"ForwardEnergy{phase}"))
+        reverse = number(data.get(f"ReverseEnergy{phase}"))
+        if forward is not None and reverse is not None:
+            data[key] = forward + reverse
+
+    if "TotalEnergy" not in data:
+        forward = number(data.get("TotalForwardEnergy"))
+        reverse = number(data.get("TotalReverseEnergy"))
+        if forward is not None and reverse is not None:
+            data["TotalEnergy"] = forward + reverse
+
     return data
 
 
