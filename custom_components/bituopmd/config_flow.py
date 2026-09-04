@@ -33,6 +33,16 @@ async def _async_validate_device(
     return normalized_host, data
 
 
+def _is_bituo_device(name: str) -> bool:
+    """Match Bituo devices advertised via mDNS.
+
+    Devices ship with either "EnergySensor-<model>-<sn>" or
+    "BITUO TECHNIK-<model>-<sn>" hostnames depending on firmware.
+    """
+    lowered = name.lower()
+    return "energysensor" in lowered or "bituo" in lowered
+
+
 class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle BituoPMD configuration."""
 
@@ -89,7 +99,7 @@ class BituoFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle Home Assistant's native zeroconf discovery."""
         name = discovery_info.name.split(".")[0]
-        if "energysensor" not in name.lower():
+        if not _is_bituo_device(name):
             return self.async_abort(reason="not_bituotechnik_device")
 
         try:
